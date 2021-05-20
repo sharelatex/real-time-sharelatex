@@ -48,6 +48,9 @@ describe('ConnectedUsersManager', function () {
       hset: sinon.stub(),
       hgetall: sinon.stub(),
       exec: sinon.stub(),
+      pipeline: () => {
+        return this.rClient
+      },
       multi: () => {
         return this.rClient
       }
@@ -65,6 +68,10 @@ describe('ConnectedUsersManager', function () {
       }
     })
     this.client_id = '32132132'
+    this.client = {
+      publicId: this.client_id,
+      ol_context: {}
+    }
     this.project_id = 'dskjh2u21321'
     this.user = {
       _id: 'user-id-123',
@@ -72,6 +79,12 @@ describe('ConnectedUsersManager', function () {
       last_name: 'Bloggs',
       email: 'joe@example.com'
     }
+    this.userSerialized = JSON.stringify({
+      user_id: this.user._id,
+      first_name: this.user.first_name,
+      last_name: this.user.last_name,
+      email: this.user.email
+    })
     return (this.cursorData = {
       row: 12,
       column: 9,
@@ -88,94 +101,18 @@ describe('ConnectedUsersManager', function () {
       return this.rClient.exec.callsArgWith(0)
     })
 
-    it('should set a key with the date and give it a ttl', function (done) {
+    it('should set a single key with all user details', function (done) {
       return this.ConnectedUsersManager.updateUserPosition(
         this.project_id,
-        this.client_id,
+        this.client,
         this.user,
         null,
         (err) => {
           this.rClient.hset
             .calledWith(
               `connected_user:${this.project_id}:${this.client_id}`,
-              'last_updated_at',
-              Date.now()
-            )
-            .should.equal(true)
-          return done()
-        }
-      )
-    })
-
-    it('should set a key with the user_id', function (done) {
-      return this.ConnectedUsersManager.updateUserPosition(
-        this.project_id,
-        this.client_id,
-        this.user,
-        null,
-        (err) => {
-          this.rClient.hset
-            .calledWith(
-              `connected_user:${this.project_id}:${this.client_id}`,
-              'user_id',
-              this.user._id
-            )
-            .should.equal(true)
-          return done()
-        }
-      )
-    })
-
-    it('should set a key with the first_name', function (done) {
-      return this.ConnectedUsersManager.updateUserPosition(
-        this.project_id,
-        this.client_id,
-        this.user,
-        null,
-        (err) => {
-          this.rClient.hset
-            .calledWith(
-              `connected_user:${this.project_id}:${this.client_id}`,
-              'first_name',
-              this.user.first_name
-            )
-            .should.equal(true)
-          return done()
-        }
-      )
-    })
-
-    it('should set a key with the last_name', function (done) {
-      return this.ConnectedUsersManager.updateUserPosition(
-        this.project_id,
-        this.client_id,
-        this.user,
-        null,
-        (err) => {
-          this.rClient.hset
-            .calledWith(
-              `connected_user:${this.project_id}:${this.client_id}`,
-              'last_name',
-              this.user.last_name
-            )
-            .should.equal(true)
-          return done()
-        }
-      )
-    })
-
-    it('should set a key with the email', function (done) {
-      return this.ConnectedUsersManager.updateUserPosition(
-        this.project_id,
-        this.client_id,
-        this.user,
-        null,
-        (err) => {
-          this.rClient.hset
-            .calledWith(
-              `connected_user:${this.project_id}:${this.client_id}`,
-              'email',
-              this.user.email
+              'user',
+              this.userSerialized
             )
             .should.equal(true)
           return done()
@@ -186,7 +123,7 @@ describe('ConnectedUsersManager', function () {
     it('should push the client_id on to the project list', function (done) {
       return this.ConnectedUsersManager.updateUserPosition(
         this.project_id,
-        this.client_id,
+        this.client,
         this.user,
         null,
         (err) => {
@@ -201,7 +138,7 @@ describe('ConnectedUsersManager', function () {
     it('should add a ttl to the project set so it stays clean', function (done) {
       return this.ConnectedUsersManager.updateUserPosition(
         this.project_id,
-        this.client_id,
+        this.client,
         this.user,
         null,
         (err) => {
@@ -219,7 +156,7 @@ describe('ConnectedUsersManager', function () {
     it('should add a ttl to the connected user so it stays clean', function (done) {
       return this.ConnectedUsersManager.updateUserPosition(
         this.project_id,
-        this.client_id,
+        this.client,
         this.user,
         null,
         (err) => {
@@ -234,10 +171,10 @@ describe('ConnectedUsersManager', function () {
       )
     })
 
-    return it('should set the cursor position when provided', function (done) {
+    it('should set the cursor position when provided', function (done) {
       return this.ConnectedUsersManager.updateUserPosition(
         this.project_id,
-        this.client_id,
+        this.client,
         this.user,
         this.cursorData,
         (err) => {
@@ -251,6 +188,125 @@ describe('ConnectedUsersManager', function () {
           return done()
         }
       )
+    })
+
+    describe('when recently updated', function () {
+      beforeEach(function (done) {
+        this.rClient.expire
+          .withArgs(`clients_in_project:${this.project_id}`)
+          .yields(null)
+        this.rClient.expire
+          .withArgs(`connected_user:${this.project_id}:${this.client_id}`)
+          .yields(null)
+        this.ConnectedUsersManager.updateUserPosition(
+          this.project_id,
+          this.client,
+          this.user,
+          null,
+          done
+        )
+      })
+      beforeEach(function () {
+        this.rClient.sadd.reset()
+        this.rClient.hset.reset()
+        this.rClient.expire.reset()
+      })
+
+      it('should not push the client_id on to the project list', function (done) {
+        return this.ConnectedUsersManager.updateUserPosition(
+          this.project_id,
+          this.client,
+          this.user,
+          null,
+          (err) => {
+            this.rClient.sadd
+              .calledWith(
+                `clients_in_project:${this.project_id}`,
+                this.client_id
+              )
+              .should.equal(false)
+            done()
+          }
+        )
+      })
+
+      it('should not update user details', function (done) {
+        this.ConnectedUsersManager.updateUserPosition(
+          this.project_id,
+          this.client,
+          this.user,
+          null,
+          (err) => {
+            this.rClient.hset
+              .calledWith(
+                `connected_user:${this.project_id}:${this.client_id}`,
+                'user',
+                this.userSerialized
+              )
+              .should.equal(false)
+            done()
+          }
+        )
+      })
+
+      it('should not bump the ttl again', function (done) {
+        this.ConnectedUsersManager.updateUserPosition(
+          this.project_id,
+          this.client,
+          this.user,
+          null,
+          (err) => {
+            this.rClient.expire
+              .calledWith(`connected_user:${this.project_id}:${this.client_id}`)
+              .should.equal(false)
+            done()
+          }
+        )
+      })
+    })
+
+    describe('when recently refreshed', function () {
+      beforeEach(function () {
+        this.rClient.expire
+          .withArgs(`connected_user:${this.project_id}:${this.client_id}`)
+          .yields(null)
+        this.ConnectedUsersManager.refreshClient(this.project_id, this.client)
+        this.rClient.expire.reset()
+      })
+
+      it('should not update user details', function (done) {
+        this.ConnectedUsersManager.updateUserPosition(
+          this.project_id,
+          this.client,
+          this.user,
+          null,
+          (err) => {
+            this.rClient.hset
+              .calledWith(
+                `connected_user:${this.project_id}:${this.client_id}`,
+                'user',
+                this.userSerialized
+              )
+              .should.equal(false)
+            done()
+          }
+        )
+      })
+
+      it('should not bump the ttl again', function (done) {
+        this.ConnectedUsersManager.updateUserPosition(
+          this.project_id,
+          this.client,
+          this.user,
+          null,
+          (err) => {
+            this.rClient.expire
+              .calledWith(`connected_user:${this.project_id}:${this.client_id}`)
+              .should.equal(false)
+            done()
+          }
+        )
+      })
     })
   })
 
@@ -307,8 +363,7 @@ describe('ConnectedUsersManager', function () {
       const cursorData = JSON.stringify({ cursorData: { row: 1 } })
       this.rClient.hgetall.callsArgWith(1, null, {
         connected_at: new Date(),
-        user_id: this.user._id,
-        last_updated_at: `${Date.now()}`,
+        user: this.userSerialized,
         cursorData
       })
       return this.ConnectedUsersManager._getConnectedUser(
@@ -317,6 +372,10 @@ describe('ConnectedUsersManager', function () {
         (err, result) => {
           result.connected.should.equal(true)
           result.client_id.should.equal(this.client_id)
+          result.user_id.should.equal(this.user._id)
+          result.first_name.should.equal(this.user.first_name)
+          result.last_name.should.equal(this.user.last_name)
+          result.email.should.equal(this.user.email)
           return done()
         }
       )
@@ -358,45 +417,43 @@ describe('ConnectedUsersManager', function () {
         .withArgs(this.project_id, this.users[0])
         .callsArgWith(2, null, {
           connected: true,
-          client_age: 2,
           client_id: this.users[0]
         })
       this.ConnectedUsersManager._getConnectedUser
         .withArgs(this.project_id, this.users[1])
         .callsArgWith(2, null, {
           connected: false,
-          client_age: 1,
           client_id: this.users[1]
         })
       this.ConnectedUsersManager._getConnectedUser
         .withArgs(this.project_id, this.users[2])
         .callsArgWith(2, null, {
           connected: true,
-          client_age: 3,
           client_id: this.users[2]
         })
       return this.ConnectedUsersManager._getConnectedUser
         .withArgs(this.project_id, this.users[3])
         .callsArgWith(2, null, {
           connected: true,
-          client_age: 11,
           client_id: this.users[3]
         })
-    }) // connected but old
+    })
 
-    return it('should only return the users in the list which are still in redis and recently updated', function (done) {
+    it('should return all the users which are still in redis', function (done) {
       return this.ConnectedUsersManager.getConnectedUsers(
         this.project_id,
         (err, users) => {
-          users.length.should.equal(2)
+          users.length.should.equal(3)
           users[0].should.deep.equal({
             client_id: this.users[0],
-            client_age: 2,
             connected: true
           })
           users[1].should.deep.equal({
             client_id: this.users[2],
-            client_age: 3,
+            connected: true
+          })
+          users[2].should.deep.equal({
+            client_id: this.users[3],
             connected: true
           })
           return done()
